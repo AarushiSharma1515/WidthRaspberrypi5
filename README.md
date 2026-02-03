@@ -14,9 +14,13 @@ How It Works
 Project Structure
 .
 ├── main.py                # Main script with detection, segmentation, and measurement logic
+
 ├── yolov8n.onnx           # YOLOv8 detection model (ONNX format)
+
 ├── yolov8n-seg.onnx       # YOLOv8 segmentation model (ONNX format)
+
 ├── yolov8n-seg.pt         # Original PyTorch segmentation model
+
 └── width_measurement.png  # Saved measurement image after successful detection
 Installation
 1️⃣ Clone the repository:
