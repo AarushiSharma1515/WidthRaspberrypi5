@@ -13,6 +13,7 @@ How It Works
 4. Dashboard View – Left: Live camera feed with ROI box. Top-right: Detection status. Bottom-right: Segmentation result and measured width.
 Project Structure
 .
+
 ├── main.py                # Main script with detection, segmentation, and measurement logic
 
 ├── yolov8n.onnx           # YOLOv8 detection model (ONNX format)
