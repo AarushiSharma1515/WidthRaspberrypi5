@@ -1,142 +1,54 @@
-# 📏 Real-Time Object Width Measurement with YOLOv8 Segmentation
+# Real-Time Object Width Measurement with YOLOv8 Segmentation
 
-> 🚀 **Real-time computer vision system for detecting, segmenting, and measuring object width in centimeters : deployed on a Raspberry Pi 5 with a live camera feed.**
+A real-time computer vision system that detects an object, segments it, and measures its physical width in centimeters — running live on a Raspberry Pi 5.
 
-Built during my internship, this project combines **YOLOv8 object detection, YOLOv8 segmentation, ONNX Runtime, OpenCV, and Raspberry Pi 5** to perform pixel-level object measurement on resource-constrained hardware.
+Built during my internship. It combines YOLOv8 detection, YOLOv8 segmentation, ONNX Runtime, and OpenCV to do pixel-level width measurement on hardware that doesn't have a GPU to spare.
 
-The system detects an object inside a predefined **Region of Interest (ROI)**, generates a pixel-precise segmentation mask, extracts its maximum continuous horizontal width, and converts that measurement into centimeters using a calibrated camera setup.
+The system watches a defined Region of Interest (ROI), detects when an object enters it, segments that object into a pixel mask, extracts its maximum horizontal width from the mask, and converts that into a real-world measurement using a calibrated pixel-to-cm ratio.
 
 ---
 
-## 🔍 Overview
+## Why this was hard
 
-The core challenge was not simply running YOLO on a Raspberry Pi — it was making **segmentation-based measurement fast enough for real-time use**.
+Running YOLO on a Raspberry Pi isn't the hard part anymore — the hard part is making *segmentation-based* measurement fast enough to be usable in real time. Segmentation is expensive, and Pi-class hardware doesn't have much room to spare.
 
-Instead of running the computationally expensive segmentation model on every frame, the system uses a **two-stage inference pipeline**:
+So the pipeline is split into two stages instead of running one expensive model on every frame:
 
-```text
+```
 Live Camera Feed
-       │
-       ▼
-  ROI Extraction
-       │
-       ▼
-YOLOv8 Detection ──────► No object → Continue scanning
-       │
-       │ Object found
-       ▼
+      │
+      ▼
+ ROI Extraction
+      │
+      ▼
+YOLOv8 Detection ──► No object found → keep scanning
+      │
+      │ object found
+      ▼
 YOLOv8 Segmentation
-       │
-       ▼
+      │
+      ▼
 Binary Segmentation Mask
-       │
-       ▼
-Maximum Continuous
-Horizontal Width
-       │
-       ▼
-Pixel → Centimeter
-Calibration
-       │
-       ▼
-Real-World Width
-       │
-       ▼
+      │
+      ▼
+Max Continuous Horizontal Width
+      │
+      ▼
+Pixel → cm Calibration
+      │
+      ▼
 Live Dashboard + Saved Result
 ```
 
-This architecture reduces unnecessary segmentation inference while retaining pixel-level measurement accuracy.
+Detection runs continuously since it's cheap. Segmentation only runs once something is actually in frame. That split is the main reason this stays usable on Pi hardware instead of grinding to a crawl.
 
 ---
 
-## ✨ Key Features
+## How the width is actually measured
 
-* 🎯 Real-time object detection using **YOLOv8**
-* 🧩 Pixel-level object segmentation using **YOLOv8 Segmentation**
-* 🔄 Two-stage **detect → segment** inference pipeline
-* 🎥 ROI-based camera processing
-* 📏 Maximum continuous horizontal width extraction from segmentation masks
-* 📐 Pixel-to-centimeter calibration
-* ⚡ ONNX model export and validation
-* 🖥️ Raspberry Pi 5 deployment
-* 📊 Live camera dashboard
-* 🔧 Linux-based headless deployment over SSH
-* 🛡️ COCO class filtering to avoid detecting people as measurement targets
+A bounding box isn't a good proxy for physical width — for anything that isn't a perfect rectangle, the box includes a lot of background:
 
----
-
-## 🧠 How It Works
-
-### Stage 1 — Detection
-
-A lightweight YOLOv8 detection model continuously scans the ROI.
-
-Its job is simply to answer:
-
-> **"Is there an object here that should be measured?"**
-
-Detection is significantly cheaper than segmentation, allowing it to run continuously without wasting compute on empty frames.
-
-### Stage 2 — Segmentation
-
-Once an object is detected, the segmentation model runs on that frame and generates a **pixel-level mask**.
-
-The mask is then analyzed to calculate the object's actual horizontal width.
-
-```text
-Detection
-   │
-   ├── No object ──► Keep scanning
-   │
-   └── Object found
-           │
-           ▼
-      Segmentation
-           │
-           ▼
-       Measurement
 ```
-
----
-
-## 🔄 Why Two Models?
-
-Running segmentation on every frame would be unnecessarily expensive on Raspberry Pi-class hardware.
-
-The pipeline therefore separates **detection** from **measurement**:
-
-```text
-┌──────────────────────┐
-│  YOLOv8 Detection    │
-│  Lightweight / Fast  │
-└──────────┬───────────┘
-           │
-           │ Object found
-           ▼
-┌──────────────────────┐
-│ YOLOv8 Segmentation  │
-│ Pixel-level mask     │
-└──────────┬───────────┘
-           │
-           ▼
-┌──────────────────────┐
-│ Width Measurement    │
-│ Pixel → Centimeter   │
-└──────────────────────┘
-```
-
-This avoids repeatedly running the expensive segmentation model while maintaining accurate measurements.
-
----
-
-## 📏 Width Measurement Algorithm
-
-A bounding-box width is not always an accurate representation of an object's physical width.
-
-For irregularly shaped objects, the bounding box can include significant background:
-
-```text
-Bounding Box
 ┌─────────────────────┐
 │        ███          │
 │      ███████        │
@@ -145,101 +57,55 @@ Bounding Box
 └─────────────────────┘
 ```
 
-Instead, this project analyzes the **segmentation mask itself**.
+So instead of using the box, the system works directly on the segmentation mask. For every row in the binary mask, it finds the longest continuous run of object pixels, then tracks the maximum run across all rows:
 
-For every row of the binary mask:
-
-1. Find continuous runs of object pixels.
-2. Measure the length of each run.
-3. Keep the longest run for that row.
-4. Track the maximum run across all rows.
-
-For example:
-
-```text
+```
 000011111111000
-
     <------>
-
     8 pixels
 ```
 
-The largest continuous horizontal run across the entire mask becomes the measured object width.
+That maximum run is the measured width — it follows the actual silhouette of the object rather than a rectangle drawn around it.
 
-This allows the measurement to follow the object's actual segmented silhouette rather than simply using the bounding-box width.
+**Pixel → cm conversion:**
+```
+PIXELS_PER_CM = measured_pixel_width / known_width_cm
+```
+For example, a 20cm object measuring 392px gives `PIXELS_PER_CM = 19.6`. This ratio is specific to the physical setup — camera, resolution, distance from lens to object, ROI size — so it has to be recalibrated whenever any of those change.
 
 ---
 
-## 🎯 Pixel-to-Centimeter Calibration
+## Accuracy — preliminary results from the live Pi 5 deployment
 
-The measured width initially exists in pixels.
+I ran three trials against known-width objects, measured on the actual Raspberry Pi 5 deployment (not a desktop simulation):
 
-To convert it into a real-world measurement:
+| Object | Actual Width | Measured Width | Error |
+|---|---|---|---|
+| Object A | 6.5 cm | 6.38 cm | 1.8% |
+| Object B | 7.5 cm | 7.55 cm | 0.7% |
+| Object C | 6.5 cm | 6.33 cm | 2.6% |
 
-```text
-PIXELS_PER_CM = pixel_width / known_width_cm
+Average error across these trials: **~1.7%**.
 
-object_width_cm = measured_pixel_width / PIXELS_PER_CM
-```
-
-For example:
-
-```text
-Known object width = 20 cm
-Measured pixel width = 392 px
-
-PIXELS_PER_CM = 392 / 20
-              = 19.6 px/cm
-```
-
-The calibration factor depends on:
-
-* Camera
-* Camera resolution
-* Camera-to-object distance
-* Lens characteristics
-* ROI configuration
-
-Therefore, calibration should be performed for the physical setup in which the system will operate.
+This is a small sample, so I'm treating it as an early signal, not a validated accuracy claim — more trials across different object types, distances, and lighting conditions are needed before I'd call this a proven number. It's on the list under Future Improvements below.
 
 ---
 
-## 🛡️ Handling False Detections
+## Handling false positives
 
-The models use standard **COCO pretrained weights**, which contain 80 object classes.
-
-One practical issue is that a person can appear in the ROI while holding the target object.
-
-Since `person` is COCO class `0`, the pipeline explicitly excludes it from both detection and segmentation:
+The models use standard COCO pretrained weights (80 classes). One real problem: a person's hand or arm often ends up inside the ROI while they're holding the object being measured. Since `person` is COCO class 0, the pipeline excludes it explicitly:
 
 ```python
 classes = [c for c in range(80) if c != 0]
 ```
 
-This prevents the system from incorrectly treating a person's hand, arm, or body as the measurement target.
+This stops the system from measuring someone's hand instead of the object in it.
 
 ---
 
-## ⚡ ONNX Optimization
+## ONNX export
 
-Running the original PyTorch models directly on the Raspberry Pi introduced unnecessary inference overhead.
-
-The models were therefore exported to **ONNX** and executed using **ONNX Runtime**.
-
-The export process uses:
-
-* 640 × 640 input resolution
-* `simplify=True`
-* `dynamic=True`
-
-The exported model is immediately loaded into ONNX Runtime and tested with a dummy inference pass.
-
-This provides two benefits:
-
-1. ⚡ Reduced inference overhead compared with the original PyTorch pipeline.
-2. ✅ Export errors are detected before deployment to the Raspberry Pi.
-
-The complete export and validation workflow is available in:
+Running the raw PyTorch models directly on the Pi added inference overhead I didn't need. Both models are exported to ONNX and run through ONNX Runtime instead — 640×640 input, `simplify=True`, `dynamic=True`. The export script immediately runs a dummy inference pass against the exported model, so export errors get caught before the model ever reaches the Pi, not after.
 
 ```bash
 python scripts/export_to_onnx.py
@@ -247,11 +113,9 @@ python scripts/export_to_onnx.py
 
 ---
 
-## 📊 Example Measurement
+## Example run
 
-A successful measurement produces output similar to:
-
-```text
+```
 Initializing...
 Camera default resolution: 1280 x 720
 Using ROI size: 300x300
@@ -270,312 +134,126 @@ Total time for measurement: 0.87 seconds.
 [INFO] Measurement saved as 'width_measurement.png'
 ```
 
-The resulting dashboard provides:
-
-```text
-┌──────────────────────────────┬─────────────────────┐
-│                              │ Detection Status    │
-│       LIVE CAMERA FEED       │                     │
-│            + ROI             │ Segmentation        │
-│                              │                     │
-│                              │ Width: 20.00 cm     │
-│                              │                     │
-└──────────────────────────────┴─────────────────────┘
-```
-
 ---
 
-## 📁 Project Structure
+## Project structure
 
-```text
+```
 WidthRaspberrypi5/
 │
-├── src/
-│   └── WidthCalculation.py
-│       └── Main detection, segmentation,
-│           measurement, and camera loop
-│
+├── WidthCalculation.py      # main detection + segmentation + measurement loop
+├── segmentRef.py            # segmentation reference/helper logic
+├── test_detection.py        # detection-only test script
+├── test_yolo.py             # YOLO model sanity checks
 ├── scripts/
-│   └── export_to_onnx.py
-│       └── Model export + ONNX validation
-│
+│   └── export_to_onnx.py    # model export + ONNX validation
 ├── requirements.txt
 └── README.md
 ```
 
-Model weights (`.pt`, `.onnx`) are intentionally excluded from version control to keep the repository lightweight.
+Model weights (`.pt`, `.onnx`) are intentionally excluded from version control — they're regenerated locally via the export script rather than committed, to keep the repo lightweight.
 
 ---
 
-## 🛠️ Installation
+## Running it
 
-### Option 1 — Local Development
-
+**Local development:**
 ```bash
 git clone https://github.com/AarushiSharma1515/WidthRaspberrypi5.git
-
 cd WidthRaspberrypi5
-
 pip install -r requirements.txt
-
-python src/WidthCalculation.py
+python WidthCalculation.py
 ```
 
-### Option 2 — Raspberry Pi 5
-
-Update the system:
-
+**Raspberry Pi 5:**
 ```bash
-sudo apt update
-sudo apt upgrade -y
-```
-
-Install dependencies:
-
-```bash
+sudo apt update && sudo apt upgrade -y
 pip install ultralytics opencv-python numpy onnxruntime
-```
 
-For Raspberry Pi Camera Module:
-
-```bash
+# for the Pi camera module
 sudo apt install -y python3-picamera2
-```
 
-Clone the repository:
-
-```bash
 git clone https://github.com/AarushiSharma1515/WidthRaspberrypi5.git
-
 cd WidthRaspberrypi5
-
-python src/WidthCalculation.py
+python WidthCalculation.py
 ```
 
----
-
-## 🖥️ Raspberry Pi Deployment
-
-The system was deployed on a **Raspberry Pi 5 running Linux** and operated alongside a live camera feed.
-
-Useful commands during deployment:
-
-### Find Raspberry Pi IP
-
+**Deployment notes:**
 ```bash
-hostname -I
-```
-
-### Check connected cameras
-
-```bash
-libcamera-hello --list-cameras
-ls /dev/video*
-```
-
-### Monitor CPU and temperature
-
-```bash
-top
-vcgencmd measure_temp
-```
-
-### Keep the application running after disconnecting SSH
-
-```bash
-nohup python3 src/WidthCalculation.py &
+hostname -I                          # find Pi's IP
+libcamera-hello --list-cameras       # check connected cameras
+vcgencmd measure_temp                # check thermals under load
+nohup python3 WidthCalculation.py &  # keep running after SSH disconnects
 ```
 
 ---
 
-## 🎯 Calibration
+## Calibration
 
-The `PIXELS_PER_CM` parameter must be calibrated for the intended camera setup.
+`PIXELS_PER_CM` is specific to your camera + distance + ROI setup and needs to be set for wherever this is actually deployed:
 
-### Calibration procedure
+1. Place an object of known width at the intended measurement distance.
+2. Run the app and record the measured pixel width.
+3. `PIXELS_PER_CM = measured_pixel_width / known_width_cm`
+4. Update the constant in the script.
 
-1. Place an object with a known physical width at the measurement distance.
-2. Run the application.
-3. Record the detected pixel width.
-4. Calculate:
-
-```text
-PIXELS_PER_CM =
-    measured_pixel_width / known_width_cm
-```
-
-5. Update the calibration constant in the application.
-
-For accurate measurements, the camera position and object distance should remain consistent with the calibration setup.
+Keep the camera position and object distance consistent with whatever you calibrated against — this is the single biggest source of error if it drifts.
 
 ---
 
-## 🎮 Controls
+## Controls
 
-| Key | Action                                        |
-| --- | --------------------------------------------- |
-| `q` | Quit application                              |
-| `n` | Reset detection mode and measure a new object |
-
----
-
-## 🐛 Troubleshooting
-
-| Problem                     | Possible Solution                                         |
-| --------------------------- | --------------------------------------------------------- |
-| Camera does not open        | Check the camera index used by `cv2.VideoCapture()`       |
-| No object detected          | Lower the YOLO confidence threshold                       |
-| Measurements are inaccurate | Recalibrate `PIXELS_PER_CM`                               |
-| Low FPS                     | Use YOLO nano models and/or reduce ROI size               |
-| Camera not detected         | Check `/dev/video*` and Pi camera configuration           |
-| High CPU usage              | Reduce input resolution, ROI size, or inference frequency |
+| Key | Action |
+|---|---|
+| `q` | Quit |
+| `n` | Reset and measure a new object |
 
 ---
 
-## 🧩 Engineering Challenges
+## Troubleshooting
 
-### 1. Real-Time Inference on Edge Hardware
-
-The Raspberry Pi 5 has considerably fewer computational resources than a desktop GPU.
-
-The solution was to:
-
-* Use lightweight YOLO models
-* Restrict processing to an ROI
-* Export models to ONNX
-* Avoid unnecessary segmentation inference
-* Monitor CPU and temperature during deployment
-
-### 2. Accurate Width Extraction
-
-Bounding boxes provide coarse object dimensions but can include significant background for irregular shapes.
-
-Using the segmentation mask allows the measurement to follow the object's actual visible silhouette.
-
-### 3. Detection Reliability
-
-A live camera feed can contain irrelevant objects, especially people holding the target object.
-
-Explicit class filtering prevents the `person` class from becoming a measurement target.
-
-### 4. Deployment Reliability
-
-The system was not only developed locally but deployed to a headless Raspberry Pi environment.
-
-This required handling:
-
-* Linux environments
-* Camera interfaces
-* SSH-based deployment
-* Python dependencies
-* ONNX Runtime
-* CPU/thermal monitoring
-* Long-running processes
+| Problem | Try this |
+|---|---|
+| Camera won't open | Check the camera index in `cv2.VideoCapture()` |
+| Nothing detected | Lower the YOLO confidence threshold |
+| Measurements look off | Recalibrate `PIXELS_PER_CM` for your current setup |
+| Low FPS | Use the nano model variants, shrink the ROI |
+| High CPU load | Reduce input resolution or inference frequency |
 
 ---
 
-## 📈 Performance
+## What was actually hard about this
 
-The optimized pipeline was designed around the constraints of Raspberry Pi 5 hardware.
+**Real-time inference on the Pi.** Nowhere near the compute of a desktop GPU, so the whole design leans on lightweight models, ROI-restricted processing, ONNX instead of raw PyTorch, and skipping segmentation whenever nothing's in frame.
 
-A representative measurement run:
+**Getting width right, not just detected.** Bounding boxes are a bad proxy for physical width on anything irregularly shaped — the segmentation-mask approach exists specifically to fix that.
 
-```text
-Detection + Segmentation + Measurement
-Total measurement time: ~0.87 seconds
-```
+**Keeping detections clean.** A live feed picks up more than the target object — mainly whoever's holding it. Explicit class filtering handles that.
 
-The key optimization was reducing how often the segmentation model runs rather than attempting to make segmentation run continuously.
-
-For further benchmarking, the pipeline can track:
-
-```text
-Detection FPS
-Segmentation latency
-End-to-end measurement latency
-CPU utilization
-Temperature
-ROI size
-Input resolution
-ONNX vs PyTorch inference time
-```
+**Actually deploying it.** Headless Linux, SSH, camera device handling, dependency management on ARM, thermal monitoring, long-running processes without a display attached — running it in a notebook and running it on a live Pi turned out to be two very different problems.
 
 ---
 
-## 💡 What I Learned
+## What's next
 
-### Computer Vision
-
-* Object detection vs. segmentation trade-offs
-* Binary mask processing
-* Pixel-level geometric measurements
-* ROI-based vision pipelines
-* Camera calibration
-
-### Edge AI
-
-* Deploying ML models on Raspberry Pi 5
-* ONNX model conversion and validation
-* Inference optimization under CPU constraints
-* Monitoring resource usage during real-time inference
-
-### Systems Engineering
-
-* Linux-based deployment
-* SSH and headless systems
-* Camera device management
-* Long-running processes
-* Debugging hardware/software integration issues
+- More accuracy trials — different objects, distances, lighting, and a real standard deviation instead of 3 data points
+- Multi-frame averaging to smooth out per-frame noise
+- Perspective correction for objects that aren't front-facing
+- Automatic camera calibration instead of a manual constant
+- Distance-aware pixel-to-cm conversion (right now it assumes fixed distance)
+- Hardware acceleration where available on the Pi
 
 ---
 
-## 🔮 Future Improvements
+## Tech stack
 
-Potential improvements include:
-
-* 📊 Multi-frame measurement averaging for greater stability
-* 📐 Perspective correction for non-front-facing objects
-* 🎯 Automatic camera calibration
-* 📏 Distance-aware pixel-to-centimeter conversion
-* ⚡ Hardware acceleration where available
-* 🔄 Continuous measurement mode
-* 🧭 More robust object tracking between frames
-* 🧪 Automated performance benchmarking
-* 📦 Support for additional measurement axes
-
----
-
-## 🧰 Tech Stack
-
-| Category             | Technology                |
-| -------------------- | ------------------------- |
-| Language             | Python                    |
-| Computer Vision      | OpenCV                    |
-| Detection            | YOLOv8                    |
-| Segmentation         | YOLOv8-Seg                |
-| Model Optimization   | ONNX                      |
-| Runtime              | ONNX Runtime              |
-| Numerical Processing | NumPy                     |
-| Hardware             | Raspberry Pi 5            |
-| OS                   | Linux                     |
-| Camera               | USB / Raspberry Pi Camera |
-| Deployment           | SSH / Headless Linux      |
-
----
-
-## 🔗 Repository
-
-**GitHub:**
-https://github.com/AarushiSharma1515/WidthRaspberrypi5
-
----
-
-## 🚀 Summary
-
-This project demonstrates an end-to-end **edge computer vision measurement system**, from live camera capture and object detection to segmentation, geometric analysis, calibration, optimization, and real-world deployment.
-
-The main engineering approach was to combine:
-
-**Lightweight Detection → Selective Segmentation → Mask-Based Measurement → Calibration → ONNX Inference**
-
-to make pixel-level object measurement practical on **Raspberry Pi-class hardware**.
+| Category | Tools |
+|---|---|
+| Language | Python |
+| Computer Vision | OpenCV |
+| Detection | YOLOv8 |
+| Segmentation | YOLOv8-Seg |
+| Optimization | ONNX / ONNX Runtime |
+| Hardware | Raspberry Pi 5 |
+| OS | Linux |
+| Deployment | SSH / headless |
